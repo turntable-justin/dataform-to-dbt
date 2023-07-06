@@ -157,7 +157,7 @@ const cleanSqlBlock = (block) => {
 
   return [';', '}'].includes(trimmed[trimmed.length - 1])
     ? trimmed
-    : `${trimmed}; `
+    : `${trimmed};`
 }
 
 // Replace a single reference, given a set of sources first
@@ -282,7 +282,7 @@ export const extractConfigs = async (
 
     const preop = preops.map(cleanSqlBlock).join('\n\n')
 
-    return `{% call set_sql_header(config) %} \n${preop} \n{% - endcall %} \n\n${sql} `
+    return `{% call set_sql_header(config) %}\n${preop}\n{%- endcall %}\n\n${sql}`
   }
 
   return parsed.map((table) => ({
@@ -301,14 +301,14 @@ const TEMP_RE =
 export const replaceTempTables = (root, schema, model) => async (content) => {
   const temps = await Promise.all(
     Array.from(content.matchAll(TEMP_RE)).map(async ([, name, sql]) => {
-      const tmpModel = `_${name.toLowerCase().replace(/^_+/, '')} `
+      const tmpModel = `_${name.toLowerCase().replace(/^_+/, '')}`
       console.warn(
-        `Detected temporary table ${name} in ${schema}.${model}, writing to ${schema}.${tmpModel} `,
+        `Detected temporary table ${name} in ${schema}.${model}, writing to ${schema}.${tmpModel}`,
       )
       await writeFile(
         path.resolve(root, 'models', schema),
         `${tmpModel}.sql`,
-        `{{ config(materialized = 'table') }} \n\n${sql} `,
+        `{{ config(materialized='table') }}\n\n${sql}`,
       )
 
       return { name, ref: tmpModel }
@@ -316,7 +316,7 @@ export const replaceTempTables = (root, schema, model) => async (content) => {
   ).then((res) =>
     res.reduce((acc, temp) => {
       const { name, ref } = temp
-      acc[name] = `{{ ref('${ref}') }} AS ${name} `
+      acc[name] = `{{ ref('${ref}') }} AS ${name}`
       return acc
     }, {}),
   )
@@ -325,8 +325,7 @@ export const replaceTempTables = (root, schema, model) => async (content) => {
   // If no temp tables, nothing to replace
   if (!tables.length) return content
 
-  const usage = new RegExp(`(?<= (?: FROM | JOIN) \\s +)(${tables}) \\b`, 'mi')
-
+  const usage = new RegExp(`(?<=(?:FROM|JOIN)\\s+)(${tables})\\b`, 'mi')
   return (
     content
       // Drop original definitions entirely
@@ -343,7 +342,7 @@ const UDF_RE =
 export const replaceUdfSchema = (store) => (content) =>
   content.replace(UDF_RE, (_, fn) => {
     const [, name] = fn.split('.')
-    const replacement = `{{ target.schema }}.${name} `
+    const replacement = `{{ target.schema }}.${name}`
     store[fn] = replacement // eslint-disable-line no-param-reassign
     return replacement
   })
@@ -373,12 +372,12 @@ export const writeOperation =
       (x) => x.trim(),
     )(sql)
 
-    const macroName = `operation_${name} `
-    onRunStart.push(`{{ ${macroName} () }} `)
+    const macroName = `operation_${name}`
+    onRunStart.push(`{{ ${macroName}() }}`)
     await writeFile(
       path.resolve(root, 'macros'),
       `${path.basename(name, path.extname(name))}.sql`,
-      `{% macro ${macroName} () %} \n${src} \n{% endmacro %} \n`,
+      `{% macro ${macroName}() %}\n${src}\n{% endmacro %}\n`,
     )
   }
 
