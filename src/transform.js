@@ -174,33 +174,33 @@ const replaceReference = (sources, adjustName) => (a, b) => {
 // Replace dataform includes with DBT macros
 const INCLUDE_RE = /\$\{(?!\s*ref\()([^}]+)\}/g
 const replaceIncludes = (root, includes) => async (content) => {
-  const macrosDir = root
+  const macrosDir = path.resolve(root, 'macros')
 
   const map = await Promise.all(
     Array.from(content.matchAll(INCLUDE_RE)).map(async ([, include]) => {
       const parts = include.split('.')
       const macro = parts
         .join('__')
-        .replace(/([a-z])([A-Z])/g, (_, a, b) => `${a}_${b} `)
+        .replace(/([a-z])([A-Z])/g, (_, a, b) => `${a}_${b}`)
         .replace(/[^A-Z_]/gi, '')
         .toLowerCase()
 
       let src
       if (include.includes('(')) {
-        src = `-- Unhandled ${include} `
+        src = `-- Unhandled ${include}`
         console.warn(
-          `Unable to handle function invocations in includes, replace macro ${macro} `,
+          `Unable to handle function invocations in includes, replace macro ${macro}`,
         )
       } else {
         const file = parts.shift()
         src = parts.reduce((acc, key) => acc[key], includes[file])
-        src = `${src} `.trim()
+        src = `${src}`.trim()
       }
 
       await writeFile(
         macrosDir,
         `${macro}.sql`,
-        `{% macro ${macro} () %} \n${src} \n{% endmacro %} `,
+        `{% macro ${macro}() %}\n${src}\n{% endmacro %}`,
       )
 
       return { include, macro }
@@ -210,7 +210,7 @@ const replaceIncludes = (root, includes) => async (content) => {
       const { include, macro } = inc
       // NOTE(@elyobo) this happens before dataform parsing and curly braces break that, so we do a
       // two step replacement after parsing
-      acc[include] = `--MACRO ${macro} () MACRO--`
+      acc[include] = `--MACRO ${macro}() MACRO--`
       return acc
     }, {}),
   )
@@ -250,12 +250,12 @@ export const extractConfigs = async (
       const absolute = path.resolve(root, table.fileName)
       return fs
         .readFile(absolute, 'utf8')
-        .then(replaceIncludes(path.resolve(save, 'macros'), includes))
+        .then(replaceIncludes(save, includes))
         .then((content) => ({
           content,
           file: {
             absolute,
-            base: path.basename(absolute, `.${absolute.split('.').pop()} `),
+            base: path.basename(absolute, `.${absolute.split('.').pop()}`),
           },
           dir: {
             name: path.basename(path.dirname(absolute)),
