@@ -352,7 +352,7 @@ export const replaceUdfSchema = (store) => (content) =>
 export const replaceUdfSchemaUsage = (replacements) => {
   const udfs = Object.keys(replacements).join('|').replace(/\./g, '\\.')
   if (!udfs) return (content) => content
-  const usage = new RegExp(`\\b(${udfs}) \\b`, 'g')
+  const usage = new RegExp(`\\b(${udfs})\\b`, 'g')
   return (content) => content.replace(usage, (_, udf) => replacements[udf])
 }
 
@@ -406,7 +406,7 @@ export const writeTest =
     await writeFile(
       path.resolve(root, 'tests'),
       `${path.basename(name, path.extname(name))}.sql`,
-      `${configHeader}${src} \n`,
+      `${configHeader}${src}\n`,
     )
   }
 
