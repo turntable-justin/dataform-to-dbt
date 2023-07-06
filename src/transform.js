@@ -40,7 +40,7 @@ export const declarationsToSourceMap = ({ declarations }) =>
 
     // refs without a schema _must_ be unique or dataform complains, and so we can figure out
     // that they're a source even without a schema here
-    if (acc[name]) throw new Error(`Name clash in sources on ${name}`)
+    // if (acc[name]) throw new Error(`Name clash in sources on ${name} and ${schema}`)
     // The original schema is used to unpack when replacing refs
     acc[name] = schema
 
@@ -157,7 +157,7 @@ const cleanSqlBlock = (block) => {
 
   return [';', '}'].includes(trimmed[trimmed.length - 1])
     ? trimmed
-    : `${trimmed};`
+    : `${trimmed}; `
 }
 
 // Replace a single reference, given a set of sources first
@@ -168,39 +168,39 @@ const replaceReference = (sources, adjustName) => (a, b) => {
     ? `source('${schema}', '${table}')`
     : `ref('${adjustName(schema, table)}')`
 
-  return `{{ ${ref} }}`
+  return `{ { ${ref} } } `
 }
 
 // Replace dataform includes with DBT macros
 const INCLUDE_RE = /\$\{(?!\s*ref\()([^}]+)\}/g
 const replaceIncludes = (root, includes) => async (content) => {
-  const macrosDir = path.resolve(root, 'macros')
+  const macrosDir = root
 
   const map = await Promise.all(
     Array.from(content.matchAll(INCLUDE_RE)).map(async ([, include]) => {
       const parts = include.split('.')
       const macro = parts
         .join('__')
-        .replace(/([a-z])([A-Z])/g, (_, a, b) => `${a}_${b}`)
+        .replace(/([a-z])([A-Z])/g, (_, a, b) => `${a}_${b} `)
         .replace(/[^A-Z_]/gi, '')
         .toLowerCase()
 
       let src
       if (include.includes('(')) {
-        src = `-- Unhandled ${include}`
+        src = `-- Unhandled ${include} `
         console.warn(
-          `Unable to handle function invocations in includes, replace macro ${macro}`,
+          `Unable to handle function invocations in includes, replace macro ${macro} `,
         )
       } else {
         const file = parts.shift()
         src = parts.reduce((acc, key) => acc[key], includes[file])
-        src = `${src}`.trim()
+        src = `${src} `.trim()
       }
 
       await writeFile(
         macrosDir,
         `${macro}.sql`,
-        `{% macro ${macro}() %}\n${src}\n{% endmacro %}`,
+        `{% macro ${macro} () %} \n${src} \n{% endmacro %} `,
       )
 
       return { include, macro }
@@ -210,7 +210,7 @@ const replaceIncludes = (root, includes) => async (content) => {
       const { include, macro } = inc
       // NOTE(@elyobo) this happens before dataform parsing and curly braces break that, so we do a
       // two step replacement after parsing
-      acc[include] = `--MACRO ${macro}() MACRO--`
+      acc[include] = `--MACRO ${macro} () MACRO--`
       return acc
     }, {}),
   )
@@ -228,6 +228,7 @@ const replaceIncludes = (root, includes) => async (content) => {
  */
 export const extractConfigs = async (
   root,
+  save,
   sources,
   adjustName,
   { assertions = [], operations = [], tables = [] },
@@ -249,12 +250,12 @@ export const extractConfigs = async (
       const absolute = path.resolve(root, table.fileName)
       return fs
         .readFile(absolute, 'utf8')
-        .then(replaceIncludes(root, includes))
+        .then(replaceIncludes(path.resolve(save, 'macros'), includes))
         .then((content) => ({
           content,
           file: {
             absolute,
-            base: path.basename(absolute, `.${absolute.split('.').pop()}`),
+            base: path.basename(absolute, `.${absolute.split('.').pop()} `),
           },
           dir: {
             name: path.basename(path.dirname(absolute)),
@@ -281,7 +282,7 @@ export const extractConfigs = async (
 
     const preop = preops.map(cleanSqlBlock).join('\n\n')
 
-    return `{% call set_sql_header(config) %}\n${preop}\n{%- endcall %}\n\n${sql}`
+    return `{% call set_sql_header(config) %} \n${preop} \n{% - endcall %} \n\n${sql} `
   }
 
   return parsed.map((table) => ({
@@ -300,14 +301,14 @@ const TEMP_RE =
 export const replaceTempTables = (root, schema, model) => async (content) => {
   const temps = await Promise.all(
     Array.from(content.matchAll(TEMP_RE)).map(async ([, name, sql]) => {
-      const tmpModel = `_${name.toLowerCase().replace(/^_+/, '')}`
+      const tmpModel = `_${name.toLowerCase().replace(/^_+/, '')} `
       console.warn(
-        `Detected temporary table ${name} in ${schema}.${model}, writing to ${schema}.${tmpModel}`,
+        `Detected temporary table ${name} in ${schema}.${model}, writing to ${schema}.${tmpModel} `,
       )
       await writeFile(
         path.resolve(root, 'models', schema),
         `${tmpModel}.sql`,
-        `{{ config(materialized='table') }}\n\n${sql}`,
+        `{ { config(materialized = 'table') } } \n\n${sql} `,
       )
 
       return { name, ref: tmpModel }
@@ -315,7 +316,7 @@ export const replaceTempTables = (root, schema, model) => async (content) => {
   ).then((res) =>
     res.reduce((acc, temp) => {
       const { name, ref } = temp
-      acc[name] = `{{ ref('${ref}') }} AS ${name}`
+      acc[name] = `{ { ref('${ref}') } } AS ${name} `
       return acc
     }, {}),
   )
@@ -324,7 +325,7 @@ export const replaceTempTables = (root, schema, model) => async (content) => {
   // If no temp tables, nothing to replace
   if (!tables.length) return content
 
-  const usage = new RegExp(`(?<=(?:FROM|JOIN)\\s+)(${tables})\\b`, 'mi')
+  const usage = new RegExp(`(?<= (?: FROM | JOIN) \\s +)(${tables}) \\b`, 'mi')
 
   return (
     content
@@ -342,7 +343,7 @@ const UDF_RE =
 export const replaceUdfSchema = (store) => (content) =>
   content.replace(UDF_RE, (_, fn) => {
     const [, name] = fn.split('.')
-    const replacement = `{{ target.schema }}.${name}`
+    const replacement = `{ { target.schema } }.${name} `
     store[fn] = replacement // eslint-disable-line no-param-reassign
     return replacement
   })
@@ -352,7 +353,7 @@ export const replaceUdfSchema = (store) => (content) =>
 export const replaceUdfSchemaUsage = (replacements) => {
   const udfs = Object.keys(replacements).join('|').replace(/\./g, '\\.')
   if (!udfs) return (content) => content
-  const usage = new RegExp(`\\b(${udfs})\\b`, 'g')
+  const usage = new RegExp(`\\b(${udfs}) \\b`, 'g')
   return (content) => content.replace(usage, (_, udf) => replacements[udf])
 }
 
@@ -372,12 +373,12 @@ export const writeOperation =
       (x) => x.trim(),
     )(sql)
 
-    const macroName = `operation_${name}`
-    onRunStart.push(`{{ ${macroName}() }}`)
+    const macroName = `operation_${name} `
+    onRunStart.push(`{ { ${macroName} () } } `)
     await writeFile(
       path.resolve(root, 'macros'),
-      `${name}.sql`,
-      `{% macro ${macroName}() %}\n${src}\n{% endmacro %}\n`,
+      `${path.basename(name, path.extname(name))}.sql`,
+      `{% macro ${macroName} () %} \n${src} \n{% endmacro %} \n`,
     )
   }
 
@@ -405,8 +406,8 @@ export const writeTest =
 
     await writeFile(
       path.resolve(root, 'tests'),
-      `${configHeader}${name}.sql`,
-      `${src}\n`,
+      `${path.basename(name, path.extname(name))}.sql`,
+      `${configHeader}${src} \n`,
     )
   }
 
@@ -458,7 +459,7 @@ export const writeModel =
     const configHeader = buildConfigHeader(dbtConfig)
     await writeFile(
       path.resolve(root, 'models', destinationDir),
-      `${name}.sql`,
-      `${configHeader}${src}\n`,
+      `${path.basename(name, path.extname(name))}.sql`,
+      `${configHeader}${src} \n`,
     )
   }

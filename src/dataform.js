@@ -49,7 +49,8 @@ export const parsePartitionBy = (value) => {
     }
   }
 
-  throw new Error(`Unable to parse partitioning clause: ${value}`)
+  // throw new Error(`Unable to parse partitioning clause: ${value}`)
+  return {}
 }
 
 /**

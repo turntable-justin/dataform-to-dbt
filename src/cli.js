@@ -40,6 +40,7 @@ program
     'dataform project root directory',
     process.cwd(),
   )
+  .option('-s, --save <save directory>', 'dbt save directory', process.cwd())
   .option(
     '-r, --rename <replacements...>',
     'a set of key/value replacements, e.g. myschema.mytable yourtable to rename the table',
@@ -50,6 +51,7 @@ program
 
 const {
   directory: ROOT,
+  save: SAVE,
   ignoreTags = [],
   profiles: PROFILES,
   rename = [],
@@ -73,6 +75,11 @@ if (!(await exists(ROOT))) {
   process.exit(1)
 }
 
+if (!(await exists(SAVE))) {
+  console.error(`Save directory ${SAVE} does not exist or is not readable.`)
+  process.exit(1)
+}
+
 if (!(await exists(path.resolve(ROOT, 'dataform.json')))) {
   console.error(`Root directory ${ROOT} is missing "dataform.json"`)
   process.exit(1)
@@ -90,9 +97,9 @@ const RENAMED = chunkify(rename, 2).reduce((acc, [from, to]) => {
   return acc
 }, {})
 
-const DBT_TESTS_DIR = path.resolve(ROOT, 'tests')
-const DBT_MODELS_DIR = path.resolve(ROOT, 'models')
-const DBT_MACROS_DIR = path.resolve(ROOT, 'macros')
+const DBT_TESTS_DIR = path.resolve(SAVE, 'tests')
+const DBT_MODELS_DIR = path.resolve(SAVE, 'models')
+const DBT_MACROS_DIR = path.resolve(SAVE, 'macros')
 
 // Utility to apply renaming for tables
 const adjustName = (schema, table) => RENAMED[schema]?.[table] || table
@@ -121,6 +128,7 @@ const DEFAULT_SCHEMA = Object.values(profiles)[0].outputs.prod.schema
 const sources = declarationsToSourceMap(DATAFORM_COMPILATION_JSON)
 const configs = await extractConfigs(
   ROOT,
+  SAVE,
   sources,
   adjustName,
   DATAFORM_COMPILATION_JSON,
@@ -128,7 +136,7 @@ const configs = await extractConfigs(
 
 await Promise.all([
   // Extract sources and write to a sources file
-  writeSourcesYML(ROOT, declarationsToDbtSources(DATAFORM_COMPILATION_JSON)),
+  writeSourcesYML(SAVE, declarationsToDbtSources(DATAFORM_COMPILATION_JSON)),
   // Extract all models docs and tests and write to appropriate files
   ...(
     await tablesToDbtModels(configs, adjustName)
@@ -148,18 +156,18 @@ const udfReplacements = {}
 await Promise.all(
   configs
     .filter((c) => c.raw.type === 'operation')
-    .map(writeOperation(ROOT, udfReplacements, onRunStart)),
+    .map(writeOperation(SAVE, udfReplacements, onRunStart)),
 )
 
 await Promise.all([
   ...configs
     .filter((c) => c.raw.type === 'assertion')
-    .map(writeTest(ROOT, udfReplacements, IGNORE_TAGS)),
+    .map(writeTest(SAVE, udfReplacements, IGNORE_TAGS)),
   ...configs
     .filter((c) => !['operation', 'assertion'].includes(c.raw.type))
     .map(
       writeModel(
-        ROOT,
+        SAVE,
         udfReplacements,
         adjustName,
         flags,
@@ -173,10 +181,10 @@ if (flags.multiSchema) {
   console.log(
     `Multiple schemas detected, writing custom schema resolver; see https://docs.getdbt.com/docs/build/custom-schemas#an-alternative-pattern-for-generating-schema-names for information`,
   )
-  await writeGenerateSchemaName(ROOT)
+  await writeGenerateSchemaName(SAVE)
 }
 
 const project = YAML.parse(await fs.readFile(TEMPLATE, 'utf8'))
 onRunStart = [...(project['on-run-start'] || []), ...onRunStart]
 if (onRunStart.length) project['on-run-start'] = onRunStart
-await writeFile(ROOT, 'dbt_project.yml', YAML.stringify(project))
+await writeFile(SAVE, 'dbt_project.yml', YAML.stringify(project))
