@@ -171,23 +171,82 @@ const replaceReference = (sources, adjustName) => (a, b) => {
   return `{{ ${ref} }}`
 }
 
+function replaceDotsAndQuotes(str) {
+  let result = '';
+  let parenCount = 0;
+  let insideQuotes = false;
+  let currentArg = '';
+
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] === '.' && parenCount === 0) {
+      result += '_';
+    } else if (str[i] === '(') {
+      parenCount++;
+      result += '(';
+    } else if (str[i] === ')') {
+      parenCount--;
+      result += currentArg.slice(currentArg.lastIndexOf('.') + 1)
+      currentArg = '';
+      result += ')';
+    } else if (parenCount > 0) {
+      if (str[i] !== "'" && str[i] !== '"') {
+        currentArg += str[i];
+      }
+    } else {
+      result += str[i];
+    }
+  }
+
+  result = result.replace(/[\s'"]/g, '').toLowerCase()
+
+  return result;
+}
+
+function replaceQuotesOnly(str) {
+  let result = '';
+  let parenCount = 0;
+  let insideQuotes = false;
+
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] === '.' && parenCount === 0) {
+      result += '_';
+    } else if (str[i] === '(') {
+      parenCount++;
+      result += '(';
+    } else if (str[i] === ')') {
+      parenCount--;
+      result += ')';
+    } else if (parenCount > 0) {
+      if (str[i] !== "'" && str[i] !== '"') {
+        result += str[i];
+      }
+    } else {
+      result += str[i];
+    }
+  }
+
+  return result.replace(/[\s'"]/g, '').toLowerCase()
+}
+
+
+function incrementalRep(str) {
+  return str.replace(/[\'"]/g, '').replace(/\s/g, 'å').toLowerCase() // å used as a placeholder character for spaces. Replaced later in the script
+}
+
 // Replace dataform includes with DBT macros
 const INCLUDE_RE = /\$\{(?!\s*ref\()([^}]+)\}/g
 const replaceIncludes = (root, includes) => async (content) => {
+
   const macrosDir = path.resolve(root, 'macros')
 
   const map = await Promise.all(
     Array.from(content.matchAll(INCLUDE_RE)).map(async ([, include]) => {
       const parts = include.split('.')
-      const macro = parts
-        .join('__')
-        .replace(/([a-z])([A-Z])/g, (_, a, b) => `${a}_${b}`)
-        .replace(/[^A-Z_]/gi, '')
-        .toLowerCase()
-
+      const macro_and_args = replaceDotsAndQuotes(include)
+      const macro = macro_and_args.slice(0, macro_and_args.indexOf('('))
       let src
       if (include.includes('(')) {
-        src = `-- Unhandled ${include}`
+        src = `-- Unhandled`
         console.warn(
           `Unable to handle function invocations in includes, replace macro ${macro}`,
         )
@@ -197,26 +256,31 @@ const replaceIncludes = (root, includes) => async (content) => {
         src = `${src}`.trim()
       }
 
-      await writeFile(
-        macrosDir,
-        `${macro}.sql`,
-        `{% macro ${macro}() %}\n${src}\n{% endmacro %}`,
-      )
+      if (!macro_and_args.startsWith("incremental(") & !macro_and_args.startsWith("when(")) {
+        await writeFile(
+          macrosDir,
+          `${macro}.sql`,
+          `{% macro ${macro_and_args} %}\n${src}\n{% endmacro %}`,
+        )
+      }
 
       return { include, macro }
     }),
   ).then((res) =>
     res.reduce((acc, inc) => {
       const { include, macro } = inc
-      // NOTE(@elyobo) this happens before dataform parsing and curly braces break that, so we do a
-      // two step replacement after parsing
-      acc[include] = `--MACRO ${macro}() MACRO--`
+      if (!include.includes("incremental(") & !include.includes("when(")) {
+        acc[include] = `--MACRO ${replaceQuotesOnly(include)} MACRO--`
+      } else {
+        acc[include] = `--MACRO ${incrementalRep(include)} MACRO--`
+      }
       return acc
     }, {}),
   )
 
   return content.replace(INCLUDE_RE, (_, include) => map[include])
 }
+
 
 /**
  * Extracts config from @dataform/core's compiler, which produces reasonably safe
@@ -226,6 +290,7 @@ const replaceIncludes = (root, includes) => async (content) => {
  * to collect the config, but parses reliably and provides sqlx with blocks like
  * config and pre-operations removed more accurately than regex extraction does.
  */
+
 export const extractConfigs = async (
   root,
   save,
@@ -281,8 +346,10 @@ export const extractConfigs = async (
     if (!preops.length) return sql
 
     const preop = preops.map(cleanSqlBlock).join('\n\n')
-
-    return `{% call set_sql_header(config) %}\n${preop}\n{%- endcall %}\n\n${sql}`
+    const pattern = /^\);\s*\}/; // Regex pattern to match the desired characters at the beginning of the string
+    const preopFinal = preop.replace(/\å/g, ' ')
+    const sqlFinal = sql.replace(pattern, '').replace(/\å/g, ' ').trim()
+    return `{% call set_sql_header(config) %}\n${preopFinal}\n{%- endcall %}\n\n${sqlFinal}`
   }
 
   return parsed.map((table) => ({
@@ -301,14 +368,14 @@ const TEMP_RE =
 export const replaceTempTables = (root, schema, model) => async (content) => {
   const temps = await Promise.all(
     Array.from(content.matchAll(TEMP_RE)).map(async ([, name, sql]) => {
-      const tmpModel = `_${name.toLowerCase().replace(/^_+/, '')}`
+      const tmpModel = `_${name.toLowerCase().replace(/^_+/, '')} `
       console.warn(
-        `Detected temporary table ${name} in ${schema}.${model}, writing to ${schema}.${tmpModel}`,
+        `Detected temporary table ${name} in ${schema}.${model}, writing to ${schema}.${tmpModel} `,
       )
       await writeFile(
         path.resolve(root, 'models', schema),
         `${tmpModel}.sql`,
-        `{{ config(materialized='table') }}\n\n${sql}`,
+        `{ { config(materialized = 'table') } } \n\n${sql} `,
       )
 
       return { name, ref: tmpModel }
@@ -316,7 +383,7 @@ export const replaceTempTables = (root, schema, model) => async (content) => {
   ).then((res) =>
     res.reduce((acc, temp) => {
       const { name, ref } = temp
-      acc[name] = `{{ ref('${ref}') }} AS ${name}`
+      acc[name] = `{ { ref('${ref}') } } AS ${name} `
       return acc
     }, {}),
   )
@@ -325,7 +392,7 @@ export const replaceTempTables = (root, schema, model) => async (content) => {
   // If no temp tables, nothing to replace
   if (!tables.length) return content
 
-  const usage = new RegExp(`(?<=(?:FROM|JOIN)\\s+)(${tables})\\b`, 'mi')
+  const usage = new RegExp(`(?<= (?: FROM | JOIN) \\s +)(${tables}) \\b`, 'mi')
   return (
     content
       // Drop original definitions entirely
@@ -342,7 +409,7 @@ const UDF_RE =
 export const replaceUdfSchema = (store) => (content) =>
   content.replace(UDF_RE, (_, fn) => {
     const [, name] = fn.split('.')
-    const replacement = `{{ target.schema }}.${name}`
+    const replacement = `{ { target.schema } }.${name} `
     store[fn] = replacement // eslint-disable-line no-param-reassign
     return replacement
   })
@@ -352,7 +419,7 @@ export const replaceUdfSchema = (store) => (content) =>
 export const replaceUdfSchemaUsage = (replacements) => {
   const udfs = Object.keys(replacements).join('|').replace(/\./g, '\\.')
   if (!udfs) return (content) => content
-  const usage = new RegExp(`\\b(${udfs})\\b`, 'g')
+  const usage = new RegExp(`\\b(${udfs}) \\b`, 'g')
   return (content) => content.replace(usage, (_, udf) => replacements[udf])
 }
 
@@ -372,12 +439,12 @@ export const writeOperation =
       (x) => x.trim(),
     )(sql)
 
-    const macroName = `operation_${name}`
-    onRunStart.push(`{{ ${macroName}() }}`)
+    const macroName = `operation_${name} `
+    onRunStart.push(`{ { ${macroName} () } } `)
     await writeFile(
       path.resolve(root, 'macros'),
       `${path.basename(name, path.extname(name))}.sql`,
-      `{% macro ${macroName}() %}\n${src}\n{% endmacro %}\n`,
+      `{% macro ${macroName} () %} \n${src} \n{% endmacro %} \n`,
     )
   }
 
@@ -406,7 +473,7 @@ export const writeTest =
     await writeFile(
       path.resolve(root, 'tests'),
       `${path.basename(name, path.extname(name))}.sql`,
-      `${configHeader}${src}\n`,
+      `${configHeader}${src} \n`,
     )
   }
 
@@ -415,50 +482,50 @@ export const writeTest =
  */
 export const writeModel =
   (root, udfReplacements, adjustName, flags, defaultSchema, ignoreTags) =>
-  async (config) => {
-    const {
-      config: {
-        bigquery: {
-          clusterBy,
-          partitionBy,
-          partitionExpirationDays,
-          requirePartitionFilter,
-        } = {},
-        schema: _schema,
-      },
-      destinationDir,
-      file: { base },
-      raw: { tags: _tags = [], type },
-      sql,
-    } = config
-    const schema = _schema || defaultSchema
-    const name = adjustName(schema, base)
-    const src = await asyncPipe(
-      replaceTempTables(root, schema, base),
-      replaceUdfSchemaUsage(udfReplacements),
-      (str) => str.trim(),
-    )(sql)
+    async (config) => {
+      const {
+        config: {
+          bigquery: {
+            clusterBy,
+            partitionBy,
+            partitionExpirationDays,
+            requirePartitionFilter,
+          } = {},
+          schema: _schema,
+        },
+        destinationDir,
+        file: { base },
+        raw: { tags: _tags = [], type },
+        sql,
+      } = config
+      const schema = _schema || defaultSchema
+      const name = adjustName(schema, base)
+      const src = await asyncPipe(
+        replaceTempTables(root, schema, base),
+        replaceUdfSchemaUsage(udfReplacements),
+        (str) => str.trim(),
+      )(sql)
 
-    const tags = _tags.filter((tag) => !ignoreTags.has(tag))
-    const dbtConfig = {
-      schema: defaultSchema === schema ? undefined : schema,
-      materialized: type === 'table' ? undefined : type,
-      tags: tags.length ? tags : undefined,
-      partition_by: parsePartitionBy(partitionBy),
-      require_partition_filter: partitionBy
-        ? requirePartitionFilter
-        : undefined,
-      partition_expiration_days: partitionBy
-        ? partitionExpirationDays
-        : undefined,
-      cluster_by: clusterBy,
+      const tags = _tags.filter((tag) => !ignoreTags.has(tag))
+      const dbtConfig = {
+        schema: defaultSchema === schema ? undefined : schema,
+        materialized: type === 'table' ? undefined : type,
+        tags: tags.length ? tags : undefined,
+        partition_by: parsePartitionBy(partitionBy),
+        require_partition_filter: partitionBy
+          ? requirePartitionFilter
+          : undefined,
+        partition_expiration_days: partitionBy
+          ? partitionExpirationDays
+          : undefined,
+        cluster_by: clusterBy,
+      }
+      // eslint-disable-next-line no-param-reassign
+      flags.multiSchema = flags.multiSchema || Boolean(dbtConfig.schema)
+      const configHeader = buildConfigHeader(dbtConfig)
+      await writeFile(
+        path.resolve(root, 'models', destinationDir),
+        `${path.basename(name, path.extname(name))}.sql`,
+        `${configHeader}${src} \n`,
+      )
     }
-    // eslint-disable-next-line no-param-reassign
-    flags.multiSchema = flags.multiSchema || Boolean(dbtConfig.schema)
-    const configHeader = buildConfigHeader(dbtConfig)
-    await writeFile(
-      path.resolve(root, 'models', destinationDir),
-      `${path.basename(name, path.extname(name))}.sql`,
-      `${configHeader}${src} \n`,
-    )
-  }
