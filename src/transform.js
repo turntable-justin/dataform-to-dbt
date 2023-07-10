@@ -230,7 +230,7 @@ function replaceQuotesOnly(str) {
 
 
 function incrementalRep(str) {
-  return str.replace(/[\'"]/g, '').replace(/\s/g, 'å').toLowerCase() // å used as a placeholder character for spaces. Replaced later in the script
+  return str.replace(/[\'"]/g, '').replace(/\s/g, '☺').toLowerCase() // ☺ used as a placeholder character for spaces. Replaced later in the script
 }
 
 // Replace dataform includes with DBT macros
@@ -347,8 +347,8 @@ export const extractConfigs = async (
 
     const preop = preops.map(cleanSqlBlock).join('\n\n')
     const pattern = /^\);\s*\}/; // Regex pattern to match the desired characters at the beginning of the string
-    const preopFinal = preop.replace(/\å/g, ' ')
-    const sqlFinal = sql.replace(pattern, '').replace(/\å/g, ' ').trim()
+    const preopFinal = preop
+    const sqlFinal = sql.replace(pattern, '').trim()
     return `{% call set_sql_header(config) %}\n${preopFinal}\n{%- endcall %}\n\n${sqlFinal}`
   }
 
@@ -375,7 +375,7 @@ export const replaceTempTables = (root, schema, model) => async (content) => {
       await writeFile(
         path.resolve(root, 'models', schema),
         `${tmpModel}.sql`,
-        `{ { config(materialized = 'table') } } \n\n${sql} `,
+        `{ { config(materialized = 'table') } } \n\n${sql.replace(/\å/g, ' ')} `,
       )
 
       return { name, ref: tmpModel }
@@ -526,6 +526,6 @@ export const writeModel =
       await writeFile(
         path.resolve(root, 'models', destinationDir),
         `${path.basename(name, path.extname(name))}.sql`,
-        `${configHeader}${src} \n`,
+        `${configHeader}${src.replace(/\☺/g, ' ')} \n`, /* replace placeholder character */
       )
     }
