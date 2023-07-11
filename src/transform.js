@@ -347,8 +347,8 @@ export const extractConfigs = async (
 
     const preop = preops.map(cleanSqlBlock).join('\n\n')
     const pattern = /^\);\s*\}/; // Regex pattern to match the desired characters at the beginning of the string
-    const preopFinal = preop
-    const sqlFinal = sql.replace(pattern, '').trim()
+    const preopFinal = preop.replace(pattern, '').replace(/\☺/g, ' ')
+    const sqlFinal = sql.replace(pattern, '').replace(/\☺/g, ' ').trim()
     return `{% call set_sql_header(config) %}\n${preopFinal}\n{%- endcall %}\n\n${sqlFinal}`
   }
 
@@ -526,6 +526,6 @@ export const writeModel =
       await writeFile(
         path.resolve(root, 'models', destinationDir),
         `${path.basename(name, path.extname(name))}.sql`,
-        `${configHeader}${src.replace(/\☺/g, ' ')} \n`, /* replace placeholder character */
+        `${configHeader}${src.replace(/\☺/g, ' ')} \n`, /* remove placeholder */
       )
     }
