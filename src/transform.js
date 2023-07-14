@@ -375,7 +375,7 @@ export const replaceTempTables = (root, schema, model) => async (content) => {
       await writeFile(
         path.resolve(root, 'models', schema),
         `${tmpModel}.sql`,
-        `{ { config(materialized = 'table') } } \n\n${sql.replace(/\å/g, ' ')} `,
+        `{{ config(materialized = 'table') }}\n\n${sql.replace(/\☺/g, ' ')} `,
       )
 
       return { name, ref: tmpModel }
@@ -383,7 +383,7 @@ export const replaceTempTables = (root, schema, model) => async (content) => {
   ).then((res) =>
     res.reduce((acc, temp) => {
       const { name, ref } = temp
-      acc[name] = `{ { ref('${ref}') } } AS ${name} `
+      acc[name] = `{{ ref('${ref}') }} AS ${name}`
       return acc
     }, {}),
   )
@@ -409,7 +409,7 @@ const UDF_RE =
 export const replaceUdfSchema = (store) => (content) =>
   content.replace(UDF_RE, (_, fn) => {
     const [, name] = fn.split('.')
-    const replacement = `{ { target.schema } }.${name} `
+    const replacement = `{{ target.schema }}.${name}`
     store[fn] = replacement // eslint-disable-line no-param-reassign
     return replacement
   })
@@ -440,7 +440,7 @@ export const writeOperation =
     )(sql)
 
     const macroName = `operation_${name} `
-    onRunStart.push(`{ { ${macroName} () } } `)
+    onRunStart.push(`{{ ${macroName}() }}`)
     await writeFile(
       path.resolve(root, 'macros'),
       `${path.basename(name, path.extname(name))}.sql`,
@@ -473,7 +473,7 @@ export const writeTest =
     await writeFile(
       path.resolve(root, 'tests'),
       `${path.basename(name, path.extname(name))}.sql`,
-      `${configHeader}${src} \n`,
+      `${configHeader}${src.replace(/\☺/g, ' ')} \n`,
     )
   }
 
